@@ -140,6 +140,23 @@ CREATE TABLE IF NOT EXISTS projects (
   delivered_at   TEXT
 );
 
+-- Every name a repo has been known by -> its stable repo_id, so a rename of the
+-- repo or its owner does not break the name-based match in attribute(). See
+-- migration 0006.
+CREATE TABLE IF NOT EXISTS repo_names (
+  repo_full   TEXT PRIMARY KEY,
+  repo_id     INTEGER NOT NULL,
+  recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Commit author email -> member identity. Every member maps to itself; extra
+-- rows are aliases for the other addresses a person commits under.
+CREATE TABLE IF NOT EXISTS member_emails (
+  email  TEXT PRIMARY KEY,
+  member TEXT NOT NULL,
+  note   TEXT
+);
+
 -- Phase 3: installation-token cache (mirrors tracker.app_tokens on Postgres).
 CREATE TABLE IF NOT EXISTS app_tokens (
   installation_id INTEGER PRIMARY KEY,
