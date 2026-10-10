@@ -23,6 +23,8 @@ const TABLES = [
   "engineer_keys",
   "projects",
   "app_tokens",
+  "repo_names",
+  "member_emails",
 ];
 
 export async function wipe(): Promise<void> {

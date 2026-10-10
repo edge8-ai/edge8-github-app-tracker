@@ -25,10 +25,15 @@ export async function installationForRepoPath(
   const owner = norm.split("/")[0];
   if (!owner) return null;
 
-  const proj = await db.get(
-    `SELECT repo_id FROM projects WHERE lower(repo_full) = ?`,
-    norm,
-  );
+  // Resolve the path to a repo_id. `projects` holds each repo's CURRENT name, so
+  // a remote still pointing at a pre-rename name misses it — and GitHub redirects
+  // old names forever, so plenty of clones never get updated. `repo_names` holds
+  // every name the repo has answered to, which is what makes both work. Without
+  // it an engineer who re-clones after an org rename gets a 404, and the helper
+  // reads 404 as "not a tracked repo" and silently stops tracking them.
+  const proj =
+    (await db.get(`SELECT repo_id FROM projects WHERE lower(repo_full) = ?`, norm)) ??
+    (await db.get(`SELECT repo_id FROM repo_names WHERE repo_full = ?`, norm));
   if (proj) {
     const insts = await db.all(
       `SELECT * FROM app_installations WHERE deleted_at IS NULL AND suspended_at IS NULL`,

@@ -73,16 +73,45 @@ async function payloadOf(deliveryId: string): Promise<any | null> {
   }
 }
 
+/**
+ * Remember that this repo_id has been known by this name.
+ *
+ * GitHub repo ids survive renames and transfers; names do not. Recording every
+ * name a repo answers to is what lets an access event logged under the old name
+ * still match a push that arrives under the new one — the exact break that the
+ * `talentedgeai` -> `edge8-ai` rename caused on 2026-09-22. Written on every
+ * push, so the next rename heals itself.
+ */
+async function rememberRepoName(
+  repoFull: string | null,
+  repoId: number,
+): Promise<void> {
+  const name = normRepo(repoFull);
+  if (!name || !Number.isFinite(repoId)) return;
+  await db.run(
+    `INSERT INTO repo_names (repo_full, repo_id) VALUES (?,?)
+     ON CONFLICT (repo_full) DO UPDATE SET repo_id = excluded.repo_id`,
+    name,
+    repoId,
+  );
+}
+
 async function ensureProject(push: PushRow): Promise<void> {
   const defBranch =
     (await payloadOf(push.delivery_id))?.repository?.default_branch ?? "main";
+  // `DO UPDATE SET repo_full` rather than DO NOTHING: the row is keyed by
+  // repo_id, so a renamed repo must have its name corrected here or it stays
+  // wrong forever. `phase` is deliberately untouched — it is a human decision,
+  // not something a webhook gets to overwrite.
   await db.run(
     `INSERT INTO projects (repo_id, repo_full, phase, default_branch)
-     VALUES (?,?, 'build', ?) ON CONFLICT (repo_id) DO NOTHING`,
+     VALUES (?,?, 'build', ?)
+     ON CONFLICT (repo_id) DO UPDATE SET repo_full = excluded.repo_full`,
     push.repo_id,
     push.repo_full ?? null,
     defBranch,
   );
+  await rememberRepoName(push.repo_full, push.repo_id);
 }
 
 async function getProject(
@@ -95,11 +124,51 @@ async function getProject(
   return p ?? { phase: "build", default_branch: "main" };
 }
 
+/**
+ * Does this access event concern the repo this push is about?
+ *
+ * Both sides are resolved to the stable repo_id before comparing, so an event
+ * logged under a name the repo no longer has still matches. Falling back to the
+ * raw name keeps repos that predate `repo_names` working unchanged.
+ */
+function sameRepo(
+  eventPath: string | null,
+  push: PushRow,
+  nameToRepoId: Map<string, number>,
+): boolean {
+  const eventName = normRepo(eventPath);
+  const eventRepoId = nameToRepoId.get(eventName);
+  if (eventRepoId !== undefined && Number.isFinite(push.repo_id)) {
+    return eventRepoId === Number(push.repo_id);
+  }
+  return eventName === normRepo(push.repo_full);
+}
+
+async function repoNameMap(): Promise<Map<string, number>> {
+  const rows = await db.all(`SELECT repo_full, repo_id FROM repo_names`);
+  return new Map(rows.map((r) => [normRepo(r.repo_full), Number(r.repo_id)]));
+}
+
+/** Commit-author email -> member. Unknown addresses map to themselves. */
+async function emailOwnerMap(): Promise<Map<string, string>> {
+  const rows = await db.all(`SELECT email, member FROM member_emails`);
+  return new Map(
+    rows.map((r) => [
+      String(r.email ?? "").trim().toLowerCase(),
+      String(r.member ?? "").trim().toLowerCase(),
+    ]),
+  );
+}
+
 // Access events for this repo within the 24h attribution window, mapped to members.
 async function accessInWindow(
   push: PushRow,
   pushMs: number,
+  // Optional so no caller can forget it and silently fall back to name matching
+  // (priorBoundary calls this too); passed in only to avoid reloading the map.
+  nameToRepoId?: Map<string, number>,
 ): Promise<Array<{ key_id: string; member: string | null; ms: number }>> {
+  const names = nameToRepoId ?? (await repoNameMap());
   const keyMember = new Map<string, string>(
     (await db.all(`SELECT key_id, member FROM engineer_keys`)).map((r) => [
       r.key_id,
@@ -110,7 +179,7 @@ async function accessInWindow(
     `SELECT key_id, observed_at, repo_path FROM git_access_events`,
   );
   return events
-    .filter((e) => normRepo(e.repo_path) === normRepo(push.repo_full))
+    .filter((e) => sameRepo(e.repo_path, push, names))
     .map((e) => ({
       key_id: e.key_id,
       member: keyMember.get(e.key_id) ?? null,
@@ -122,11 +191,29 @@ async function accessInWindow(
 }
 
 // Resolve a set of candidate members to exactly one, or null (still ambiguous).
-function disambiguate(members: string[], push: PushRow): string | null {
+// Author emails are resolved through member_emails first: people commit under
+// addresses that are not the one on their key (a different TLD, a GitHub noreply,
+// a personal account), and comparing raw strings silently never matched them.
+function disambiguate(
+  members: string[],
+  push: PushRow,
+  emailOwner: Map<string, string>,
+): string | null {
   if (members.length === 1) return members[0];
   if (members.length > 1) {
-    const emails = new Set<string>(JSON.parse(push.author_emails ?? "[]"));
-    const hits = members.filter((m) => emails.has(m));
+    let authored: string[] = [];
+    try {
+      authored = JSON.parse(push.author_emails ?? "[]");
+    } catch {
+      authored = [];
+    }
+    const owners = new Set(
+      authored.map((e) => {
+        const addr = String(e ?? "").trim().toLowerCase();
+        return emailOwner.get(addr) ?? addr;
+      }),
+    );
+    const hits = members.filter((m) => owners.has(m.trim().toLowerCase()));
     if (hits.length === 1) return hits[0];
   }
   return null;
@@ -141,12 +228,14 @@ export async function attribute(
   push: PushRow,
   pushMs: number,
 ): Promise<string | null> {
-  const window = await accessInWindow(push, pushMs);
+  const nameToRepoId = await repoNameMap();
+  const emailOwner = await emailOwnerMap();
+  const window = await accessInWindow(push, pushMs, nameToRepoId);
   if (window.length) {
     const members = [
       ...new Set(window.map((e) => e.member).filter(Boolean)),
     ] as string[];
-    return disambiguate(members, push);
+    return disambiguate(members, push, emailOwner);
   }
   const keyMember = new Map<string, string>(
     (await db.all(`SELECT key_id, member FROM engineer_keys`)).map((r) => [
@@ -157,7 +246,7 @@ export async function attribute(
   const past = (
     await db.all(`SELECT key_id, observed_at, repo_path FROM git_access_events`)
   )
-    .filter((e) => normRepo(e.repo_path) === normRepo(push.repo_full))
+    .filter((e) => sameRepo(e.repo_path, push, nameToRepoId))
     .filter((e) => {
       const ms = toMs(e.observed_at);
       return Number.isFinite(ms) && ms <= pushMs;
@@ -166,7 +255,7 @@ export async function attribute(
     const members = [
       ...new Set(past.map((e) => keyMember.get(e.key_id)).filter(Boolean)),
     ] as string[];
-    const hit = disambiguate(members, push);
+    const hit = disambiguate(members, push, emailOwner);
     if (hit) return hit;
   }
   const active = await db.all(
