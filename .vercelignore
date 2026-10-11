@@ -1,10 +1,18 @@
 # Not needed at runtime on Vercel (functions live in api/ + their src/ imports).
-tests/
-cli/
-docs/
-scripts/
-supabase/
-data/
-keys/
-secret.txt
+#
+# Every pattern is ROOT-ANCHORED with a leading slash, and must stay that way.
+# These are gitignore semantics: `cli/` matches a directory called `cli` at ANY
+# depth, so it silently swallowed `api/cli/` and the /api/cli/latest function was
+# never uploaded. The deployment went green, the route 404'd, and nothing in the
+# build output said why. `/cli/` means the one at the root, which is what was
+# meant all along. Each of these names exists only at the root today — anchoring
+# keeps a future `api/<name>/` route from disappearing the same way.
+/tests/
+/cli/
+/docs/
+/scripts/
+/supabase/
+/data/
+/keys/
+/secret.txt
 *.html
