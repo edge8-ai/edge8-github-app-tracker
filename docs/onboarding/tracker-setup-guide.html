@@ -244,11 +244,11 @@
       <p>Via a private channel (DM, password manager share — not a group chat), send:</p>
       <ul>
         <li>The <strong>key</strong> from step 2</li>
-        <li>The <strong><code>tracker.tgz</code></strong> installer — download the latest from the
-            <a href="https://github.com/talentedgeai/edge8-github-app-tracker/releases">Releases page</a>,
-            or with the GitHub CLI:</li>
       </ul>
-      <pre><code>gh release download --repo talentedgeai/edge8-github-app-tracker --pattern "*.tgz" -O tracker.tgz</code></pre>
+      <p><strong>There is no installer to send.</strong> The engineer downloads the CLI themselves
+         with their own key, so they always get the current version rather than whatever file was
+         attached to an old message:</p>
+      <pre><code>curl -H "x-edge8-key: THEIR_KEY" -o tracker.tgz https://edge8-github-app-tracker-kappa.vercel.app/api/cli/latest</code></pre>
       <ul>
         <li>This guide, and the name of the <strong>repo they'll work on</strong> (for their final check)</li>
       </ul>

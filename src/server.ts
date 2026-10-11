@@ -4,6 +4,7 @@ import {
   handleAdminKeys,
   handleAppToken,
   handleBeacon,
+  handleCliDownload,
   handleHealth,
   handleWebhook,
 } from "./handlers.js";
@@ -16,12 +17,19 @@ const app = express();
 const PORT = Number(process.env.PORT ?? 3000);
 
 function send(res: express.Response, r: HandlerResult): void {
-  if (r.json !== undefined) res.status(r.status).json(r.json);
+  for (const [k, v] of Object.entries(r.headers ?? {})) res.setHeader(k, v);
+  if (r.bytes !== undefined) res.status(r.status).send(Buffer.from(r.bytes));
+  else if (r.json !== undefined) res.status(r.status).json(r.json);
   else if (r.text !== undefined) res.status(r.status).send(r.text);
   else res.status(r.status).end();
 }
 
 app.get("/health", async (_req, res) => send(res, await handleHealth()));
+
+// The CLI tarball. Header-only auth, deliberately — see api/cli/latest.ts.
+app.get("/cli/latest", async (req, res) =>
+  send(res, await handleCliDownload(req.header("x-edge8-key") ?? "")),
+);
 
 // RAW body on the webhook route — required for signature verification.
 app.post(

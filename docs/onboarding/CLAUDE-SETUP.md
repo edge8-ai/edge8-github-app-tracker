@@ -143,19 +143,15 @@ it, it cannot be recovered — revoke and re-create.
 Errors: `401 {"error":"unauthorized"}` → wrong/missing admin token, re-check it.
 `400 {"error":"email required"}` → body malformed or email invalid.
 
-**A2. Get the CLI tarball for the engineer.** Download the latest release asset:
-
-```
-gh release download --repo talentedgeai/edge8-github-app-tracker --pattern "*.tgz" -O tracker.tgz
-```
-
-(`gh` missing or not logged in? Tell the admin to grab the `.tgz` from
-`https://github.com/talentedgeai/edge8-github-app-tracker/releases` in a browser instead.)
+**A2. There is no tarball to send.** The engineer downloads the CLI themselves from
+`GET /api/cli/latest`, which serves the newest release to any holder of a valid `e8k_` key.
+Their key is therefore the only thing that has to travel, and they always get the current
+version rather than whatever file was attached to a months-old message.
 
 **A3. Tell the admin what to send the engineer**, privately:
 - the key from A1
-- `tracker.tgz` from A2
-- the setup guide (`tracker-setup-guide.html`) and/or this file
+- [`NEW-ENGINEER.md`](./NEW-ENGINEER.md) — the five-minute walkthrough, or
+  `tracker-setup-guide.html` / this file for more detail
 - the name of the private repo the engineer will work on (used for their final verification)
 
 ### Managing keys (when asked)
@@ -186,10 +182,8 @@ Ask for whatever is missing before you start (ask once, in one message):
 
 1. **Engineer key** — starts with `e8k_`. If they don't have one, stop and tell them to ask
    their Edge8 admin (the admin follows Role A above); you cannot proceed without it.
-2. **The CLI tarball `tracker.tgz`** — usually already in the current folder or in
-   `~/Downloads`. Search those two places first (`tracker.tgz`, or any `edge8-tracker-*.tgz`)
-   before asking. If the user has GitHub access to the `talentedgeai` org and `gh` is
-   installed, you may instead download it yourself (same command as step A2).
+2. **Nothing else.** The CLI is downloaded with the key itself in B2, so never ask the user
+   to find a `tracker.tgz` or to have GitHub access.
 3. *(Optional)* the name of a tracked private repo to use for final verification.
 
 ### Steps
@@ -214,13 +208,26 @@ If Node or Git is missing/too old, install it before continuing:
 - **Linux:** the distro package manager (`apt`, `dnf`, …); prefer NodeSource or `nvm` if the
   distro Node is < 18.
 
-**B2. Locate the tarball.** Find `tracker.tgz` (or `edge8-tracker-*.tgz`) in the current
-directory or `~/Downloads`. Use the **exact resolved file path** in the next step — never a glob.
+**B2. Download the tarball** with the engineer's own key — no file transfer, and always the
+current version. On PowerShell use `curl.exe`; plain `curl` there is an alias for
+`Invoke-WebRequest` and will not send the header correctly.
+
+```
+curl -H "x-edge8-key: <ENGINEER_KEY>" -o tracker.tgz https://edge8-github-app-tracker-kappa.vercel.app/api/cli/latest
+```
+
+The key goes in the **header, never the URL**: request URLs are written to platform access
+logs, and a live credential must not end up there. Expect ~17 KB. `{"error":"bad key"}` means
+the key is wrong or revoked (see B4's error handling); a `503` naming a missing release or
+installation is a server-side problem to report, not something the engineer can fix.
+
+If the engineer already has a `tracker.tgz` from an older hand-off, use the download above
+anyway — a stale tarball is how machines end up several versions behind.
 
 **B3. Install globally.**
 
 ```
-npm i -g <full-path-to-tracker.tgz>
+npm i -g ./tracker.tgz
 ```
 
 Expected: `added 1 package` (npm warnings are fine). On `EACCES` (macOS/Linux) retry with

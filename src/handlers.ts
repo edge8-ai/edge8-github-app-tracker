@@ -4,6 +4,7 @@ import { parseDelivery } from "./parse.js";
 import { postPushCapture } from "./mint.js";
 import { onPullRequestWebhook } from "./pairing.js";
 import { installationForRepoPath, mintInstallationToken } from "./github.js";
+import { fetchLatestTarball, releaseRepo } from "./cli-release.js";
 
 // Framework-agnostic request handlers — the local Express server (src/server.ts)
 // and the Vercel functions (api/*) both delegate here, so behaviour is identical.
@@ -12,6 +13,10 @@ export interface HandlerResult {
   status: number;
   json?: unknown;
   text?: string;
+  /** Binary payload (the CLI tarball). Set instead of json/text. */
+  bytes?: Uint8Array;
+  /** Response headers to set alongside `bytes`. */
+  headers?: Record<string, string>;
 }
 
 // Compare two secrets in constant time with NO length leak: hash both to a fixed
@@ -206,6 +211,55 @@ export async function handleBeacon(
   // and is still being used — so the work is real even though nothing was minted now.
   if (rec) await logAccessEvent(rec.key_id, body, "beacon", "cache_hit");
   return { status: 204 };
+}
+
+// --- GET /cli/latest — hand the CLI tarball to any holder of a valid key ---
+//
+// The engineer key is the only credential an engineer is sent, so it is the only
+// one this can require. A key that mints GitHub tokens for every covered repo is
+// strictly more powerful than the client it is downloading, so gating the
+// tarball behind it adds no exposure — and revoking a key closes this too.
+//
+// The route reads the key from a header and never a query string: see the note
+// in api/cli/latest.ts for why a one-liner `npm i -g <url>` was rejected.
+export async function handleCliDownload(
+  presented: string,
+  fetchTarball = fetchLatestTarball,
+): Promise<HandlerResult> {
+  const rec = await findActiveKey(presented);
+  if (!rec) return { status: 401, json: { error: "bad key" } };
+
+  const repo = releaseRepo();
+  const inst = await installationForRepoPath(repo);
+  if (!inst) {
+    return {
+      status: 503,
+      json: { error: `no installation covers ${repo}; cannot read its releases` },
+    };
+  }
+
+  let token: string;
+  try {
+    ({ token } = await mintInstallationToken(Number(inst.installation_id)));
+  } catch (err: any) {
+    return { status: 503, json: { error: "mint failed", detail: String(err?.message ?? err) } };
+  }
+
+  const got = await fetchTarball(token, repo, fetch);
+  if (!got.ok) return { status: got.status, json: { error: got.error } };
+
+  return {
+    status: 200,
+    bytes: got.tarball.bytes,
+    headers: {
+      "content-type": "application/gzip",
+      "content-length": String(got.tarball.bytes.byteLength),
+      // npm writes the file under this name, so `npm i -g` reports the version.
+      "content-disposition": `attachment; filename="${got.tarball.name}"`,
+      // The newest release changes without warning; never let a proxy pin it.
+      "cache-control": "no-store",
+    },
+  };
 }
 
 // --- GET /health ---
