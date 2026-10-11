@@ -157,6 +157,18 @@ export async function parseDelivery(
         deletedAt,
         JSON.stringify(p),
       );
+      // Remember this login. The upsert above overwrites account_login, so a
+      // rename would otherwise leave nothing answering to the old owner name
+      // while every existing git remote still uses it (see migration 0008).
+      const login = (inst.account?.login ?? "").trim().toLowerCase();
+      if (login) {
+        await db.run(
+          `INSERT INTO installation_names (account_login, installation_id) VALUES (?,?)
+           ON CONFLICT (account_login) DO UPDATE SET installation_id = excluded.installation_id`,
+          login,
+          inst.id,
+        );
+      }
       break;
     }
     // Any other event: raw is already stored; nothing to derive yet. That is fine.

@@ -126,6 +126,68 @@ test("a re-clone under the new name resolves, instead of 404ing into silence", a
   assert.equal(await installationForRepoPath("nobody/nothing.git"), null);
 });
 
+// ── the OWNER rename (migration 0008) ───────────────────────────────────────
+//
+// repo_names only covers repos that have pushed at least once. For every other
+// repo the owner fallback is the safety net, and an owner rename broke it:
+// parse.ts overwrites account_login, so after the rename nothing answered to
+// the old name while every git remote still used it. Live cost: 19 silent 404s
+// on talentedgeai/aio-cert-dashboard, a repo the installation covers.
+
+const installation = (login: string, id = 555, repoIds: number[] = [1]) =>
+  H.db.run(
+    `INSERT INTO app_installations (installation_id, account_login, account_type, repo_ids)
+     VALUES (?,?,?,?)`,
+    id,
+    login,
+    "Organization",
+    JSON.stringify(repoIds),
+  );
+
+const knownAs = (login: string, id = 555) =>
+  H.db.run(
+    `INSERT INTO installation_names (account_login, installation_id) VALUES (?,?)
+     ON CONFLICT (account_login) DO UPDATE SET installation_id = excluded.installation_id`,
+    login,
+    id,
+  );
+
+test("a repo that never pushed still resolves under the owner's OLD name", async () => {
+  await installation("neworg"); // GitHub overwrote the login on rename
+  await knownAs("neworg");
+  await knownAs("oldorg"); // ...but we remember what it used to be
+  // No projects row and no repo_names row: this repo has never pushed, which is
+  // exactly the case repo_names cannot help with.
+  assert.ok(await installationForRepoPath("oldorg/never-pushed.git"));
+  assert.ok(await installationForRepoPath("neworg/never-pushed.git"));
+});
+
+test("without the alias the old owner name 404s — the bug, reproduced", async () => {
+  await installation("neworg");
+  await knownAs("neworg");
+  assert.equal(await installationForRepoPath("oldorg/never-pushed.git"), null);
+});
+
+test("an alias pointing at a deleted or suspended installation does not resurrect it", async () => {
+  await H.db.run(
+    `INSERT INTO app_installations (installation_id, account_login, account_type, repo_ids, deleted_at)
+     VALUES (?,?,?,?,?)`,
+    556,
+    "goneorg",
+    "Organization",
+    JSON.stringify([1]),
+    "2026-10-01T00:00:00Z",
+  );
+  await knownAs("formerly-goneorg", 556);
+  assert.equal(await installationForRepoPath("formerly-goneorg/x.git"), null);
+});
+
+test("an unknown owner is still a 404, alias table or not", async () => {
+  await installation("neworg");
+  await knownAs("neworg");
+  assert.equal(await installationForRepoPath("stranger/repo.git"), null);
+});
+
 // ── the email alias ─────────────────────────────────────────────────────────
 
 test("an author email that is not the key's email still identifies its owner", async () => {

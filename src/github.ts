@@ -47,12 +47,31 @@ export async function installationForRepoPath(
     });
     if (hit) return hit;
   }
+  const direct = await db.get(
+    `SELECT * FROM app_installations
+     WHERE lower(account_login) = ? AND deleted_at IS NULL AND suspended_at IS NULL
+     ORDER BY installation_id LIMIT 1`,
+    owner,
+  );
+  if (direct) return direct;
+
+  // The owner may have been renamed. `account_login` is overwritten on every
+  // installation webhook, so after a rename no row answers to the old name —
+  // while engineers' remotes keep using it, because GitHub redirects forever.
+  // `installation_names` keeps every login an installation has answered to;
+  // without this, a covered repo that simply has not pushed yet (so it is in
+  // neither projects nor repo_names) 404s, and the helper reads 404 as "not a
+  // tracked repo" and silently drops the engineer onto personal credentials.
+  const alias = await db.get(
+    `SELECT installation_id FROM installation_names WHERE account_login = ?`,
+    owner,
+  );
+  if (!alias) return null;
   return (
     (await db.get(
       `SELECT * FROM app_installations
-       WHERE lower(account_login) = ? AND deleted_at IS NULL AND suspended_at IS NULL
-       ORDER BY installation_id LIMIT 1`,
-      owner,
+       WHERE installation_id = ? AND deleted_at IS NULL AND suspended_at IS NULL`,
+      alias.installation_id,
     )) ?? null
   );
 }

@@ -149,6 +149,14 @@ CREATE TABLE IF NOT EXISTS repo_names (
   recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Every account login an installation has been known by -> its installation_id,
+-- so an owner rename does not strand remotes still using the old name (0008).
+CREATE TABLE IF NOT EXISTS installation_names (
+  account_login   TEXT PRIMARY KEY,
+  installation_id INTEGER NOT NULL,
+  recorded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Commit author email -> member identity. Every member maps to itself; extra
 -- rows are aliases for the other addresses a person commits under.
 CREATE TABLE IF NOT EXISTS member_emails (
