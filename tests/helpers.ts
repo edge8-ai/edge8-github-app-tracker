@@ -25,6 +25,7 @@ const TABLES = [
   "app_tokens",
   "repo_names",
   "member_emails",
+  "installation_names",
 ];
 
 export async function wipe(): Promise<void> {
