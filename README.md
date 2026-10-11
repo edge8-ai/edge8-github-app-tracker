@@ -101,7 +101,7 @@ Works on **Windows, macOS, and Linux**. Before running `tracker setup`, install:
 | **npm** (bundled with Node) | Installs the CLI globally (`npm i -g`) | `npm -v` |
 | **Git ≥ 2.34** | The tracker plugs into git's credential system; 2.34+ honors `password_expiry_utc` so stale tokens aren't reused | `git --version` |
 | **An engineer key** (`e8k_…`) | The **only** credential you need — ask an admin. Your key mints the token that clones/pulls/pushes tracked repos | — |
-| **The CLI tarball** (`.tgz`) | Get it from an admin, or the Releases page. `gh release download` needs a GitHub login **only if the repo is private** — otherwise just grab the file | `gh --version` *(if using gh)* |
+| **curl** (ships with Windows 10+, macOS and Linux) | Downloads the CLI from the server using your key — no file transfer, no GitHub account | `curl --version` (PowerShell: `curl.exe --version`) |
 
 > **You do _not_ need your personal GitHub account to have access to the tracked repos.** Your `e8k_` key
 > mints a short-lived **installation token** (from the GitHub App) that already carries the repo access, and
@@ -112,14 +112,19 @@ A fallback credential manager for personal/untracked repos is optional and usual
 (Windows: Git Credential Manager · macOS: `osxkeychain` · Linux: `cache`) — `tracker setup` wires the
 right one for your OS automatically.
 
-The three commands below are **identical on Windows (CMD/PowerShell), macOS, and Linux** —
-`-O tracker.tgz` writes the download to a fixed name so there is no shell glob to expand
-(`*.tgz` is not expanded by Windows CMD/PowerShell).
+**Your key is the only thing you need.** The server hands out the CLI to anyone holding a
+valid one, so there is no file to be sent and no GitHub account required — see
+[docs/onboarding/NEW-ENGINEER.md](docs/onboarding/NEW-ENGINEER.md) for the walkthrough.
+
+The commands below are the same on Windows (CMD/PowerShell), macOS and Linux, except that
+PowerShell needs `curl.exe` rather than `curl` (plain `curl` there is an alias for
+`Invoke-WebRequest`). `-o tracker.tgz` fixes the filename so there is no shell glob to expand.
 
 ```bash
-# 1. Download the latest CLI from Releases (needs GitHub access to the talentedgeai org).
-gh release download --repo talentedgeai/edge8-github-app-tracker --pattern "*.tgz" -O tracker.tgz
-#    (no gh? download the .tgz from the Releases page in a browser and rename it tracker.tgz)
+# 1. Download the latest CLI. The key goes in a HEADER, never the URL: request URLs
+#    land in platform access logs, and a key does not belong there.
+curl -H "x-edge8-key: e8k_xxxxxxxx_yyyy" -o tracker.tgz \
+  https://edge8-github-app-tracker-kappa.vercel.app/api/cli/latest
 
 # 2. Install globally.
 npm i -g ./tracker.tgz
